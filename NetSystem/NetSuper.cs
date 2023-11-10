@@ -116,7 +116,7 @@ public class NetSuper {
         foreach(ServerConnection sc in serverConnections){
             if(sc.friendlyName == friendlyName){
                 sc.listener.stop = true;
-                await Task.Delay(20);
+                //await Task.Delay(20);
                 sc.listener.client.Close();
                 Log($"Closed listener for {friendlyName}");
                 onServerUpdate?.Invoke(new ServerData{ connected = false, connectionName = friendlyName });
@@ -152,7 +152,6 @@ public class NetSuper {
     public async Task<bool> ConnectToServer(string IP, int port, string friendlyName){
         try{
             TcpClient client = new TcpClient();
-            client.SendBufferSize = MaxPayloadLength;
             await client.ConnectAsync(IP, port);
             NetworkStream stream = client.GetStream();
             //send the friendly name
@@ -163,6 +162,7 @@ public class NetSuper {
             senderClient = new SenderClientStream(client, stream);
             Log("Connected to server", false, ConsoleColor.DarkGreen);
             this.friendlyName = friendlyName;
+            await Task.Delay(100);
             TcpClient client2 = new TcpClient();
             await client2.ConnectAsync(IP, port);
             NetworkStream stream2 = client2.GetStream();
@@ -293,8 +293,9 @@ public class NetSuper {
                     int size = int.Parse(info.Substring(0, 4)); //get the size of the data buffer
                     dataBuffer = new byte[size]; //create the data buffer
                     await stream.ReadAsync(dataBuffer, 0, size); //read the data buffer using the first 4 digits of info as the length
-                
-                    netSuper.Log($"Recived Data From Client: {friendlyName}");
+                    if(size == 0){ continue; }
+                    int payloadId = int.Parse(info.Substring(4, 4));
+                    netSuper.Log($"Recived Data From Client: {friendlyName} ID: {payloadId}");
                     netSuper.ProcessData(dataBuffer, int.Parse(info.Substring(4, 4)), friendlyName); //get just the data from the buffer
                 }
             }

@@ -16,9 +16,9 @@ namespace NetSystem
             //ask s/c for server or client
             //NetSys netSys = new NetSys();
             Console.WriteLine("Server or Client? (s/c)");
-            netSys.fullLogging = true;
+            //netSys.fullLogging = true;
             ListenForData(netSys);
-            bool useServer = false;
+            bool useServer = true;
             string input = "";
             if (useServer)
             {

@@ -1,3 +1,7 @@
-add a ping function to the server
-
 spotanious disconnects
+
+fix ping function
+
+fix weirdness
+
+fix connecting too fast
