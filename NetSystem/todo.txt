@@ -1,1 +1,3 @@
-Prospective client error when connecting
+add a ping function to the server
+
+spotanious disconnects

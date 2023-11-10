@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -15,22 +16,28 @@ namespace NetSystem
             //ask s/c for server or client
             //NetSys netSys = new NetSys();
             Console.WriteLine("Server or Client? (s/c)");
-            //netSys.fullLogging = true;
+            netSys.fullLogging = true;
             ListenForData(netSys);
-            //string input = Console.ReadLine();
+            bool useServer = false;
             string input = "";
+            if (useServer)
+            {
+                input = Console.ReadLine();
+            }  
             //check if this app is already running
             bool running = System.Diagnostics.Process.GetProcessesByName(System.IO.Path.GetFileNameWithoutExtension(System.Reflection.Assembly.GetEntryAssembly().Location)).Count() > 1;
-            if (input == "s" || !running)
+            
+            if (input == "s" || (!running && !useServer))
             {
                 //SendListenTicks();
+                Console.WriteLine("Starting server");
                 netSys.StartServer(12347);
-                //ListenForServerEvents(netSys);
+                ListenForServerEvents(netSys);
             }
-            else if (input == "c" || running)
+            else if (input == "c" || (running && !useServer))
             {
                 //start client
-                await netSys.ConnectToServer(IP.GetIP(), 12347, "My Friendly Connection");
+                await netSys.ConnectToServer(IP.GetIP(!useServer), 12347, "My Friendly Connection");
                 //await netSys.AddListenersAsync(9);
                 //await netSys.AddSendersAsync(9);
 
@@ -60,6 +67,11 @@ namespace NetSystem
                     else if (input.StartsWith("SPEEDUDP"))
                     {
                         //await TimedTestUDP(netSys.client);
+                    }
+                    else if (input.StartsWith("PING"))
+                    {
+                        int i = await netSys.GetPing();
+                        Console.WriteLine($"Ping: {i}");
                     }
                     else if (input.StartsWith("SCALETEST"))
                     {
@@ -187,15 +199,17 @@ namespace NetSystem
                 }
             };
         }
-        // void ListenForServerEvents(NetSuper e){
-        //     e.onClientConnected += (id, name) =>
-        //     {
-        //         Console.WriteLine($"Client {id} ({name}) connected");
-        //     };
-        //     e.onClientDisconnected += (id, name) =>
-        //     {
-        //         Console.WriteLine($"Client {id} ({name}) disconnected");
-        //     };
-        // }
+
+        void ListenForServerEvents(NetSuper e){
+            e.onServerUpdate += (client) =>
+            {
+                if(client.connected){
+                    Console.WriteLine($"Client connected: {client.connectionName}");
+                }
+                else{
+                    Console.WriteLine($"Client disconnected: {client.connectionName}");
+                }
+            };
+        }
     }
 }

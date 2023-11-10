@@ -10,12 +10,11 @@ using BinaryFormatter = System.Runtime.Serialization.Formatters.Binary.BinaryFor
 
 public class NetSuper {
     //Configure the PayloadLength values
-    readonly short MaxPayloadLength = 1480, PayloadDataLength = 8;
+    readonly short MaxPayloadLength = 8192, PayloadDataLength = 8;
     //Allow Logging
     public bool fullLogging = false;
-    int port;
-    string IP;
     string friendlyName;
+    bool gotPing = false;
     SenderClientStream senderClient;
     ListenerClientStream listenerClient;
     List<ServerConnection> serverConnections;
@@ -52,71 +51,58 @@ public class NetSuper {
         server.Stop();
         Log("Server Process Ended");
     }
+    public delegate void ServerEventHandler(ServerData data);
+    public event ServerEventHandler onServerUpdate;
+    public struct ServerData{
+        public bool connected, unexpected;
+        public string connectionName;
+    }
     async Task HandleProspectiveClientAsync(TcpClient c) {
         //create the buffers
         DateTime start = DateTime.Now;
-        byte[] buffer, lenBuffer, bBuffer;
+        byte[] infoBuffer = new byte[8], dataBuffer;
         try {
             NetworkStream stream = c.GetStream();
             // Handle client requests
             while (c.Connected && start.AddSeconds(5) > DateTime.Now){
-                lenBuffer = new byte[4]; //create the length buffer
-                await stream.ReadAsync(lenBuffer, 0, 4); //read the length buffer
-                string lenString = Encoding.ASCII.GetString(lenBuffer, 0, 4); //convert the length buffer to a string
-                int len = 0; int.TryParse(lenString, out len);
-                //netSys.Log($"Recived Length: {lenString}", true);
-                if(lenString == ""){ len = len / 0;}
-                else if(len == 0){ continue; }
-                int totalBytes = len; //get the total bytes from the length buffer
-                totalBytes += PayloadDataLength; //add the payload data length
-                buffer = new byte[totalBytes]; bBuffer = new byte[totalBytes - 4]; //create the buffer and the data buffer
-                await stream.ReadAsync(bBuffer, 0, bBuffer.Length); //read the data buffer
-                Array.Copy(lenBuffer, 0, buffer, 0, lenBuffer.Length); //make buffer = lenBuffer + bBuffer
-                Array.Copy(bBuffer, 0, buffer, 4, bBuffer.Length); //make buffer = lenBuffer + bBuffer
-                if (totalBytes == 0) { Log("totalbytes0"); break; } //might be redundant
-                else{
-                    // get the first 8 bytes as a string
-                    string info = Encoding.ASCII.GetString(buffer, 0, 8);
-                    //id is bytes 4-6
-                    int payloadId = int.Parse(info.Substring(4, 3));
-                    //terminator is byte 7
-                    int terminator = int.Parse(info.Substring(7, 1));
-                    //Log($"PayloadId: {payloadId}, Terminator: {terminator}, from info: {info}");
-                    //remove the first 8 bytes to get the payload
-                    byte[] payload = new byte[buffer.Length - 8];
-                    Array.Copy(buffer, 8, payload, 0, buffer.Length - 8);
-                    string friendlyName = (string)ByteArrayToObject(payload);
-                    if(payloadId == 1){
-                        await DataOKAsync(stream);
-                        //Make us a listener
-                        //if we get here, there is no server connection with the same name, so we need to make one
-                        ServerConnection serverConnection = new ServerConnection(friendlyName);
-                        serverConnection.listener = new ListenerClientStream(c, stream, this, friendlyName);
-                        serverConnections.Add(serverConnection);
-                        Log($"Added listener to new server connection: {friendlyName}");
-                        return;
-                    }
-                    else if(payloadId == 2){
-                        await DataOKAsync(stream);
-                        //make us a sender
-                        //check if there is a server connection with the same name
-                        foreach(ServerConnection sc in serverConnections){
-                            if(sc.friendlyName == friendlyName){
-                                //add us as a sender
-                                sc.sender = new SenderClientStream(c, stream);
-                                Log($"Added sender to {friendlyName}");
-                                return;
-                            }
-                        }
-                        //if we get here, there is no server connection with the same name, so we need to make one
-                        Log($"Tried To Add Sender with no client", true);
-                        c.Close();
-                        return;
-                    }
-                    else{
-                        break;
-                    }
+                await stream.ReadAsync(infoBuffer, 0, 8); //read the info buffer
+                string info = Encoding.ASCII.GetString(infoBuffer, 0, 8); //convert the info buffer to a string
+                int size = int.Parse(info.Substring(0, 4)); //get the size of the data buffer
+                dataBuffer = new byte[size]; //create the data buffer
+                await stream.ReadAsync(dataBuffer, 0, size); //read the data buffer using the first 4 digits of info as the length
+                int payloadId = int.Parse(info.Substring(4, 4));
+                string friendlyName = (string)ByteArrayToObject(dataBuffer);
+                if(payloadId == 1){
+                    
+                    //Make us a listener
+                    //if we get here, there is no server connection with the same name, so we need to make one
+                    ServerConnection serverConnection = new ServerConnection(friendlyName)
+                    { listener = new ListenerClientStream(c, stream, this, friendlyName) };
+                    serverConnections.Add(serverConnection);
+                    Log($"Added listener to new server connection: {friendlyName}");
+                    return;
                 }
+                else if(payloadId == 2){
+                    //make us a sender
+                    //check if there is a server connection with the same name
+                    foreach(ServerConnection sc in serverConnections){
+                        if(sc.friendlyName == friendlyName){
+                            //add us as a sender
+                            sc.sender = new SenderClientStream(c, stream);
+                            Log($"Added sender to {friendlyName}");
+                            onServerUpdate?.Invoke(new ServerData{ connected = true, connectionName = friendlyName });
+                            return;
+                        }
+                    }
+                    //if we get here, there is no server connection with the same name, so we need to make one
+                    Log($"Tried To Add Sender with no client", true);
+                    c.Close();
+                    return;
+                }
+                else{
+                    break;
+                }
+                
             }
         }
         catch (Exception ex) { 
@@ -129,10 +115,11 @@ public class NetSuper {
     async Task EndListenersAsync(string friendlyName){
         foreach(ServerConnection sc in serverConnections){
             if(sc.friendlyName == friendlyName){
-                sc.listener.plsClose = true;
                 sc.listener.stop = true;
                 await Task.Delay(20);
                 sc.listener.client.Close();
+                Log($"Closed listener for {friendlyName}");
+                onServerUpdate?.Invoke(new ServerData{ connected = false, connectionName = friendlyName });
                 return;
             }
         }
@@ -162,10 +149,11 @@ public class NetSuper {
         }
     }
     //Client
-    public async Task<bool> ConnectToServer(string ip, int port, string friendlyName){
+    public async Task<bool> ConnectToServer(string IP, int port, string friendlyName){
         try{
             TcpClient client = new TcpClient();
-            await client.ConnectAsync(ip, port);
+            client.SendBufferSize = MaxPayloadLength;
+            await client.ConnectAsync(IP, port);
             NetworkStream stream = client.GetStream();
             //send the friendly name
             await Send(friendlyName, 1, stream);
@@ -174,8 +162,6 @@ public class NetSuper {
             //add the client to the list
             senderClient = new SenderClientStream(client, stream);
             Log("Connected to server", false, ConsoleColor.DarkGreen);
-            this.IP = ip;
-            this.port = port;
             this.friendlyName = friendlyName;
             TcpClient client2 = new TcpClient();
             await client2.ConnectAsync(IP, port);
@@ -185,12 +171,20 @@ public class NetSuper {
             await stream2.FlushAsync();
             //add the client to the list
             listenerClient = new ListenerClientStream(client2, stream2, this);
+            onClientStatusChange?.Invoke(true);
             return true;
         }
         catch(Exception e){
             Log($"Error connecting to server: {e.Message}", true);
             return false;
         }
+    }
+    public async Task<int> GetPing(){
+        gotPing = false;
+        DateTime start = DateTime.Now;
+        await SendData(friendlyName, -2);
+        while(!gotPing){ await Task.Delay(1); }
+        return (int)(DateTime.Now - start).TotalMilliseconds;
     }
     public async Task<bool> SendData(object data, int payloadId){
         try{
@@ -206,34 +200,42 @@ public class NetSuper {
         }
     }
     public async Task StopClient(){
-        Log("Requesting senders to close");
-        await SendData(friendlyName, -3);
-        Log("Requesting listeners to close");
-        listenerClient.plsClose = true;
+        Log("Requesting server listeners to close");
+        await SendData(friendlyName, -1);
+        Log("Requesting our listeners to close");
         listenerClient.stop = true;
         listenerClient.client.Close();
+        Log("Requesting our senders to close");
+        senderClient.client.Close();
         Log("Client Stopped");
+        onClientStatusChange?.Invoke(false);
     }
+    public delegate void ClientEventHandler(bool connected);
+    public event ClientEventHandler onClientStatusChange;
 
     public delegate void ProcessDataEventHandler(RecivedData data);
     public event ProcessDataEventHandler onDataRecived;
     public struct RecivedData{
         public object dataObj;
         public int payloadId;
-        public bool isServer;
         public string connetionName;
     }
-    async void ProcessData(byte[] data, int payloadId, bool isServer, string friendlyName)
+    async void ProcessData(byte[] data, int payloadId, string friendlyName)
     {
         // Your data processing logic here
         object dataObj = ByteArrayToObject(data);
         //Log($"ProcessData ID:({payloadId}) {(string)dataObj}");
-        if(isServer && payloadId < 0){
+        if(payloadId < 0){
             if(payloadId == -1){
                 await EndListenersAsync((string)dataObj); //destroy all listeners with the same name
             }
             else if(payloadId == -2){
-                //server.SetClientAsListen((string)dataObj, ID); //ping the server
+                 //ping the server
+                 await SendToClient(friendlyName, -3, friendlyName);
+            }
+            else if(payloadId == -3){
+                 //ping the server
+                gotPing = true;
             }
             return;
         }
@@ -242,7 +244,6 @@ public class NetSuper {
         {
             dataObj = dataObj,
             payloadId = payloadId,
-            isServer = isServer,
             connetionName = friendlyName
         };
         onDataRecived?.Invoke(r);
@@ -269,7 +270,7 @@ public class NetSuper {
         public TcpClient client;
         public NetworkStream stream;
         //Task listenerTask;
-        public bool stop = false, plsClose = false;
+        public bool stop = false;
         NetSuper netSuper;
         string friendlyName;
         public ListenerClientStream(TcpClient client, NetworkStream stream, NetSuper netSuper, string friendlyName = null){
@@ -283,34 +284,27 @@ public class NetSuper {
             //create the buffers
             netSuper.Log("Client Process Started");
             if(stream == null){ stream = client.GetStream(); }
-            byte[] fBuffer = null, buffer, lenBuffer, bBuffer;
+            byte[] dataBuffer, infoBuffer = new byte[8];
             try {
                 // Handle client requests
                 while (client.Connected){
-                    if(stop){ netSuper.Log("TCP Handeler Terminated"); return; }
-                    lenBuffer = new byte[4]; //create the length buffer
-                    //await stream.FlushAsync();
-                    await stream.ReadAsync(lenBuffer, 0, 4); //read the length buffer
-                    string lenString = Encoding.ASCII.GetString(lenBuffer, 0, 4); //convert the length buffer to a string
-                    int len = 0; int.TryParse(lenString, out len);
-                    //netSuper.Log($"Recived Length: {lenString}", true);
-                    if(lenString == ""){ len = len / 0;}
-                    else if(len == 0){ continue; }
-                    int totalBytes = len; //get the total bytes from the length buffer
-                    totalBytes += netSuper.PayloadDataLength; //add the payload data length
-                    buffer = new byte[totalBytes]; bBuffer = new byte[totalBytes - 4]; //create the buffer and the data buffer
-                    await stream.ReadAsync(bBuffer, 0, bBuffer.Length); //read the data buffer
-                    Array.Copy(lenBuffer, 0, buffer, 0, lenBuffer.Length); //make buffer = lenBuffer + bBuffer
-                    Array.Copy(bBuffer, 0, buffer, 4, bBuffer.Length); //make buffer = lenBuffer + bBuffer
-                    if (totalBytes == 0) { netSuper.Log("totalbytes0"); break; } //might be redundant
+                    await stream.ReadAsync(infoBuffer, 0, 8); //read the info buffer
+                    string info = Encoding.ASCII.GetString(infoBuffer, 0, 8); //convert the info buffer to a string
+                    int size = int.Parse(info.Substring(0, 4)); //get the size of the data buffer
+                    dataBuffer = new byte[size]; //create the data buffer
+                    await stream.ReadAsync(dataBuffer, 0, size); //read the data buffer using the first 4 digits of info as the length
+                
                     netSuper.Log($"Recived Data From Client: {friendlyName}");
-                    fBuffer = netSuper.Recive(buffer, true, friendlyName, fBuffer); //get just the data from the buffer
-                    //if we are expecting a response, confirm the data was recieved
-                    await netSuper.DataOKAsync(stream);
+                    netSuper.ProcessData(dataBuffer, int.Parse(info.Substring(4, 4)), friendlyName); //get just the data from the buffer
                 }
             }
             catch (Exception ex) {
-                if(!plsClose){ netSuper.Log($"TCP Handler Error: {ex.Message}", true, ConsoleColor.Red); }
+                if(!stop){
+                    netSuper.Log($"TCP Handler Error: {ex.Message}", true, ConsoleColor.Red);
+                }
+                else{
+                    netSuper.Log("TCP Handeler Terminated");
+                }
             }
             client.Dispose();
             netSuper.Log("Client Process Ended", false, ConsoleColor.DarkYellow);
@@ -320,112 +314,28 @@ public class NetSuper {
     {
         // Convert the object to bytes
         byte[] dataBytes = ObjectToByteArray(data);
-        //Log($"Sending {dataBytes.Length} bytes of data");
-        // Split the data into multiple payloads if necessary
-        List<byte[]> payloads = SplitDataIntoPayloads(dataBytes);
-        // Send each payload
-        for (int i = 0; i < payloads.Count; i++) {
-            // Determine if this is the last payload
-            bool isLastPayload = i == payloads.Count - 1;
-            // Determine the terminator value
-            char terminator = isLastPayload ? '1' : '2';
-            // Determine the length of the payload
-            int payloadLength = payloads[i].Length + PayloadDataLength; // lengthBytes + payloadId + payloadData + terminator
-            string payloadIDString = payloadId.ToString("000");
-            if(payloadIDString.Length == 4){ payloadIDString = $"-0{payloadIDString[3]}"; }
-            string info = $"{payloads[i].Length:0000}{payloadIDString}{terminator}";
-            byte[] infoBytes = Encoding.ASCII.GetBytes(info);
-            // Create the complete payload
-            byte[] completePayload = new byte[payloadLength];
-
-            Array.Copy(infoBytes, 0, completePayload, 0, infoBytes.Length);
-            Log($"completePayload: {completePayload.Length}");
-            //Log($"payloadLength: {payloadLength}, info: {info}");
-            Array.Copy(payloads[i], 0, completePayload, 8, payloads[i].Length);
-            // Send the payload
-            bool b = await SendPayloadAsync(completePayload, stream);
-            if(!b){ Log("Payload Send Error", true);  return false; }
-            Log($"Payload {i + 1}/{payloads.Count} sent, waiting for OK.");
-            await WaitForDataOKAsync(stream);
-            Log("Data OK Recived");
-        }
+        if(dataBytes.Length > MaxPayloadLength - PayloadDataLength){ Log($"Data too large: {dataBytes.Length} bytes", true); return false; }
+        int payloadLength = dataBytes.Length + PayloadDataLength; // lengthBytes + payloadId + payloadData + terminator
+        string payloadIDString = payloadId.ToString("0000");
+        if(payloadIDString.Length == 5){ payloadIDString = $"-00{payloadIDString[4]}"; }
+        string info = $"{dataBytes.Length:0000}{payloadIDString}";
+        byte[] infoBytes = Encoding.ASCII.GetBytes(info);
+        // Create the complete payload
+        byte[] completePayload = new byte[payloadLength];
+        //write the info to the first 8 bytes
+        Array.Copy(infoBytes, 0, completePayload, 0, 8);
+        //write the data to the rest of the payload
+        Array.Copy(dataBytes, 0, completePayload, 8, dataBytes.Length);
+        // Send the payload
+        bool b = await SendPayloadAsync(completePayload, stream);
+        if(!b){ Log("Payload Send Error", true);  return false; }
         return true;
-    }
-    byte[] Recive(byte[] toProcess, bool isServer, string friendlyName, byte[] previous = null){
-        try{
-            //if previous is null, then this is the first payload
-            // get the first 8 bytes as a string
-            string info = Encoding.ASCII.GetString(toProcess, 0, 8);
-            //id is bytes 4-6
-            int payloadId = int.Parse(info.Substring(4, 3));
-            //terminator is byte 7
-            int terminator = int.Parse(info.Substring(7, 1));
-            //Log($"PayloadId: {payloadId}, Terminator: {terminator}, from info: {info}");
-            //remove the first 8 bytes to get the payload
-            byte[] payload = new byte[toProcess.Length - 8];
-            Array.Copy(toProcess, 8, payload, 0, toProcess.Length - 8);
-
-            if(previous != null){
-                byte[] combined = new byte[previous.Length + payload.Length];
-                Array.Copy(previous, 0, combined, 0, previous.Length);
-                Array.Copy(payload, 0, combined, previous.Length, payload.Length);
-                payload = combined;
-            }
-            
-            if (terminator == 1){
-                //this is the last payload
-                //process the data
-                ProcessData(payload, payloadId, isServer, friendlyName);
-                return null;
-            }
-            else if (terminator == 2){ return payload; } //this is not the last payload
-            else{
-                //this is not a valid payload
-                Log("Invalid payload", true); return null;   
-            }
-        }
-        catch(Exception e){
-            Log($"Error reciving data: {e.Message}", true);
-            return null;
-        }
-    }
-    async Task WaitForDataOKAsync(NetworkStream stream)
-    {
-        byte[] responseBuffer = new byte[2];
-        string response = "";
-        while (!response.Contains("ok")) {
-            try
-            {
-                int bytesRead = await stream.ReadAsync(responseBuffer, 0, 2);
-                response += Encoding.ASCII.GetString(responseBuffer, 0, bytesRead);
-            }
-            catch(Exception ex){ Log($"Failed to get OK: {ex.Message}", true); return; }
-        }
-    }
-    async Task DataOKAsync(NetworkStream stream)
-    {
-        byte[] buffer = Encoding.ASCII.GetBytes("ok");
-        await stream.WriteAsync(buffer, 0, buffer.Length);
     }
     async Task<bool> SendPayloadAsync(byte[] payload, NetworkStream stream)
     {
         try{ await stream.WriteAsync(payload, 0, payload.Length); }
         catch(Exception e){ Log($"Error sending payload: {e.Message}", true); return false; }
         return true;
-    }
-    List<byte[]> SplitDataIntoPayloads(byte[] data)
-    {
-        List<byte[]> payloads = new List<byte[]>();
-        int remainingLength = data.Length, startIndex = 0;
-        while (remainingLength > 0) {
-            int currentPayloadLength = Math.Min(remainingLength, MaxPayloadLength - PayloadDataLength);
-            byte[] payload = new byte[currentPayloadLength];
-            Array.Copy(data, startIndex, payload, 0, currentPayloadLength);
-            payloads.Add(payload);
-            remainingLength -= currentPayloadLength;
-            startIndex += currentPayloadLength;
-        }
-        return payloads;
     }
     byte[] ObjectToByteArray(object b){
         try{
