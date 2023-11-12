@@ -14,7 +14,6 @@ public class NetSuper {
     //Allow Logging
     public bool fullLogging = false;
     string friendlyName;
-    bool gotPing = false;
     SenderClientStream senderClient;
     ListenerClientStream listenerClient;
     List<ServerConnection> serverConnections;
@@ -179,13 +178,6 @@ public class NetSuper {
             return false;
         }
     }
-    public async Task<int> GetPing(){
-        gotPing = false;
-        DateTime start = DateTime.Now;
-        await SendData(friendlyName, -2);
-        while(!gotPing){ await Task.Delay(1); }
-        return (int)(DateTime.Now - start).TotalMilliseconds;
-    }
     public async Task<bool> SendData(object data, int payloadId){
         try{
             if(senderClient == null){return false;}
@@ -211,7 +203,6 @@ public class NetSuper {
     }
     public delegate void ClientEventHandler(bool connected);
     public event ClientEventHandler onClientStatusChange;
-
     public delegate void ProcessDataEventHandler(RecivedData data);
     public event ProcessDataEventHandler onDataRecived;
     public struct RecivedData{
@@ -223,18 +214,11 @@ public class NetSuper {
     {
         // Your data processing logic here
         object dataObj = ByteArrayToObject(data);
+        if(dataObj == null){ Log($"Error on pl: {payloadId}"); return; }
         //Log($"ProcessData ID:({payloadId}) {(string)dataObj}");
         if(payloadId < 0){
             if(payloadId == -1){
                 await EndListenersAsync((string)dataObj); //destroy all listeners with the same name
-            }
-            else if(payloadId == -2){
-                 //ping the server
-                 await SendToClient(friendlyName, -3, friendlyName);
-            }
-            else if(payloadId == -3){
-                 //ping the server
-                gotPing = true;
             }
             return;
         }
@@ -290,9 +274,18 @@ public class NetSuper {
                     await stream.ReadAsync(infoBuffer, 0, 8); //read the info buffer
                     string info = Encoding.ASCII.GetString(infoBuffer, 0, 8); //convert the info buffer to a string
                     int size = int.Parse(info.Substring(0, 4)); //get the size of the data buffer
-                    dataBuffer = new byte[size]; //create the data buffer
-                    await stream.ReadAsync(dataBuffer, 0, size); //read the data buffer using the first 4 digits of info as the length
                     if(size == 0){ continue; }
+                    dataBuffer = new byte[size]; //create the data buffer
+                    int index = 0, timesRead = 0;
+                    while(index < size){ 
+                        int br = await stream.ReadAsync(dataBuffer, index, size - index);
+                        if(br == 0 || br < size){ await Task.Delay(1); }
+                        index += br;
+                        timesRead++;
+                    } //read the data buffer using the first 4 digits of info as the length
+                    
+                    netSuper.Log($"Got Data {timesRead} times", true);
+                    //await stream.ReadAsync(dataBuffer, 0, size); //read the data buffer using the first 4 digits of info as the length
                     int payloadId = int.Parse(info.Substring(4, 4));
                     netSuper.Log($"Recived Data From Client: {friendlyName} ID: {payloadId}");
                     netSuper.ProcessData(dataBuffer, int.Parse(info.Substring(4, 4)), friendlyName); //get just the data from the buffer
@@ -301,6 +294,8 @@ public class NetSuper {
             catch (Exception ex) {
                 if(!stop){
                     netSuper.Log($"TCP Handler Error: {ex.Message}", true, ConsoleColor.Red);
+                    netSuper.onServerUpdate?.Invoke(new ServerData{ connected = false, unexpected = true, connectionName = friendlyName });
+                    netSuper.onClientStatusChange?.Invoke(false);
                 }
                 else{
                     netSuper.Log("TCP Handeler Terminated");
@@ -314,7 +309,7 @@ public class NetSuper {
     {
         // Convert the object to bytes
         byte[] dataBytes = ObjectToByteArray(data);
-        if(dataBytes.Length > MaxPayloadLength - PayloadDataLength){ Log($"Data too large: {dataBytes.Length} bytes", true); return false; }
+        if(dataBytes.Length > MaxPayloadLength - (PayloadDataLength + 0)){ Log($"Data too large: {dataBytes.Length} bytes", true); return false; }
         int payloadLength = dataBytes.Length + PayloadDataLength; // lengthBytes + payloadId + payloadData + terminator
         string payloadIDString = payloadId.ToString("0000");
         if(payloadIDString.Length == 5){ payloadIDString = $"-00{payloadIDString[4]}"; }
@@ -326,6 +321,8 @@ public class NetSuper {
         Array.Copy(infoBytes, 0, completePayload, 0, 8);
         //write the data to the rest of the payload
         Array.Copy(dataBytes, 0, completePayload, 8, dataBytes.Length);
+        //add a terinator
+        //completePayload[completePayload.Length - 1] = 0;
         // Send the payload
         bool b = await SendPayloadAsync(completePayload, stream);
         if(!b){ Log("Payload Send Error", true);  return false; }

@@ -11,12 +11,14 @@ namespace NetSystem
     {
         NetSuper netSys = new NetSuper();
         int lastID = 0, scaleIndex = 0;
+        bool active = true;
+        DateTime time;
         public async Task DoTests()
         {
             //ask s/c for server or client
             //NetSys netSys = new NetSys();
             Console.WriteLine("Server or Client? (s/c)");
-            //netSys.fullLogging = true;
+            netSys.fullLogging = true;
             ListenForData(netSys);
             bool useServer = true;
             string input = "";
@@ -37,9 +39,8 @@ namespace NetSystem
             else if (input == "c" || (running && !useServer))
             {
                 //start client
-                await netSys.ConnectToServer(IP.GetIP(!useServer), 12347, "My Friendly Connection");
-                //await netSys.AddListenersAsync(9);
-                //await netSys.AddSendersAsync(9);
+                ListenForClientEvents(netSys);
+                await netSys.ConnectToServer(IP.GetIP(!useServer), 12347, "TConnection");
 
                 //await Task.Delay(3000);
                 //await client.SendData("beans", 1);
@@ -50,10 +51,10 @@ namespace NetSystem
                 //await Task.Delay(1000);
                 //await client.SendData("What the fuck did you just fucking say about me, you little bitch? I'll have you know I graduated top of my class in the Navy Seals, and I've been involved in numerous secret raids on Al-Quaeda, and I have over 300 confirmed kills. I am trained in gorilla warfare and I'm the top sniper in the entire US armed forces. You are nothing to me but just another target. I will wipe you the fuck out with precision the likes of which has never been seen before on this Earth, mark my fucking words.", 1);
                 //await client.SendData("What the fuck did you just fucking say about me, you little bitch? I'll have you know I graduated top of my class in the Navy Seals, and I've been involved in numerous secret raids on Al-Quaeda, and I have over 300 confirmed kills. I am trained in gorilla warfare and I'm the top sniper in the entire US armed forces. You are nothing to me but just another target. I will wipe you the fuck out with precision the likes of which has never been seen before on this Earth, mark my fucking words. You think you can get away with saying that shit to me over the Internet? Think again, fucker. As we speak I am contacting my secret network of spies across the USA and your IP is being traced right now so you better prepare for the storm, maggot. The storm that wipes out the pathetic little thing you call your life. You're fucking dead, kid. I can be anywhere, anytime, and I can kill you in over seven hundred ways, and that's just with my bare hands. Not only am I extensively trained in unarmed combat, but I have access to the entire arsenal of the United States Marine Corps and I will use it to its full extent to wipe your miserable ass off the face of the continent, you little shit. If only you could have known what unholy retribution your little clever comment was about to bring down upon you, maybe you would have held your fucking tongue. But you couldn't, you didn't, and now you're paying the price, you goddamn idiot. I will shit fury all over you and you will drown in it. You're fucking dead, kiddo.", 1);
-                bool active = true;
+                
                 while (active)
                 {
-                    Console.WriteLine($"STOP, RETURN, UDP, SCALETEST, SPEEDUDP, DATA, data");
+                    Console.WriteLine($"STOP, RETURN, PING, SCALETEST, LENTEST, data");
                     input = Console.ReadLine();
                     if (input == "STOP") { active = false; }
                     else if (input.StartsWith("RETURN")) {
@@ -70,12 +71,16 @@ namespace NetSystem
                     }
                     else if (input.StartsWith("PING"))
                     {
-                        int i = await netSys.GetPing();
-                        Console.WriteLine($"Ping: {i}");
+                        time = DateTime.Now;
+                        await netSys.SendData(time, 11);
                     }
                     else if (input.StartsWith("SCALETEST"))
                     {
                         await MessagingTest();
+                    }
+                    else if (input.StartsWith("LENTEST"))
+                    {
+                        await SizeTest();
                     }
                     else if (input.StartsWith("DATA"))
                     {
@@ -125,6 +130,25 @@ namespace NetSystem
             }
             await netSys.SendData($"Sent {sends} messages over {seconds} seconds", 8);
             return sends;
+        }
+        async Task SizeTest(){
+            Console.WriteLine("Starting size test");
+            int size = 100;
+            string s = getRandomString(size);
+            bool ok = true;
+            while(ok){
+                Console.WriteLine($"Sending {size} chars");
+                for (int i = 0; i < 100; i++)
+                {
+                    bool b = await netSys.SendData(s, 7);
+                    if(!b){
+                        ok = false;
+                        break;
+                    }
+                }
+                size += 100;
+                s = getRandomString(size);
+            }
         }
         string getRandomString(int length){
             string random = "";
@@ -198,6 +222,14 @@ namespace NetSystem
                     TestNetworkData d = (TestNetworkData)data.dataObj;
                     //PrintNetData(d);
                 }
+                else if (data.payloadId == 11)
+                {
+                    await netSys.SendToClient(data.dataObj, 12, data.connetionName);
+                }
+                else if (data.payloadId == 12)
+                {
+                    Console.WriteLine($"Ping time: {(DateTime.Now - time).TotalMilliseconds}");
+                }
                 else
                 {
                     Console.WriteLine($"Recived ({data.payloadId}): {(string)data.dataObj}");
@@ -212,7 +244,24 @@ namespace NetSystem
                     Console.WriteLine($"Client connected: {client.connectionName}");
                 }
                 else{
-                    Console.WriteLine($"Client disconnected: {client.connectionName}");
+                    if(client.unexpected){
+                        Console.WriteLine($"Client disconnected unexpectedly: {client.connectionName}");
+                    }
+                    else{
+                        Console.WriteLine($"Client disconnected: {client.connectionName}");
+                    }
+                }
+            };
+        }
+        void ListenForClientEvents(NetSuper e){
+            e.onClientStatusChange += (connected) =>
+            {
+                if(connected){
+                    Console.WriteLine($"Connected to server");
+                }
+                else{
+                    Console.WriteLine($"Disconnected from server");
+                    active = false;
                 }
             };
         }
