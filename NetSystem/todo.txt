@@ -2,6 +2,7 @@ spotanious disconnects
 
 fix ping function
 
-fix weirdness
+fix connecting too fast (does it need fixing?)
 
-fix connecting too fast
+
+long payload pre-reading

@@ -188,7 +188,6 @@ public class NetSuper {
     }
     public async Task<bool> SendData(object data, int payloadId){
         try{
-            //check how many senders are available, if there are none, return false, and if there more than 1 run syncronously
             if(senderClient == null){return false;}
             else{
                 return await Send(data, payloadId, senderClient.stream);
@@ -334,7 +333,10 @@ public class NetSuper {
     }
     async Task<bool> SendPayloadAsync(byte[] payload, NetworkStream stream)
     {
-        try{ await stream.WriteAsync(payload, 0, payload.Length); }
+        try{
+            await stream.WriteAsync(payload, 0, payload.Length); 
+            while(stream.DataAvailable){ await Task.Delay(1); } //wait until the stream is empty
+        }
         catch(Exception e){ Log($"Error sending payload: {e.Message}", true); return false; }
         return true;
     }

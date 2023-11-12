@@ -115,8 +115,13 @@ namespace NetSystem
             string s = getRandomString(r.Next(min, max));
             while (DateTime.Now < start.AddSeconds(seconds))
             {
-                await netSys.SendData(s, 7);
-                sends++;
+                bool b = await netSys.SendData(s, 7);
+                if(b){
+                    sends++;
+                }
+                else{
+                    return sends;
+                }
             }
             await netSys.SendData($"Sent {sends} messages over {seconds} seconds", 8);
             return sends;
