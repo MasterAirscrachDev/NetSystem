@@ -18,7 +18,7 @@ namespace NetSystem
             //ask s/c for server or client
             //NetSys netSys = new NetSys();
             Console.WriteLine("Server or Client? (s/c)");
-            netSys.fullLogging = true;
+            //netSys.fullLogging = true;
             ListenForData(netSys);
             bool useServer = true;
             string input = "";
@@ -110,7 +110,7 @@ namespace NetSystem
             am = await MultiTest(min, max, 10);
             Console.WriteLine($"Sent {am} messages in 10 seconds, mp/s: {am/10f}");
         }
-        async Task<int>MultiTest( int min, int max, int seconds)
+        async Task<int>MultiTest(int min, int max, int seconds)
         {
             //get the start time
             DateTime start = DateTime.Now;

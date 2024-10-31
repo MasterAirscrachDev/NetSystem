@@ -276,15 +276,8 @@ public class NetSuper {
                     int size = int.Parse(info.Substring(0, 4)); //get the size of the data buffer
                     if(size == 0){ continue; }
                     dataBuffer = new byte[size]; //create the data buffer
-                    int index = 0, timesRead = 0;
-                    while(index < size){ 
-                        int br = await stream.ReadAsync(dataBuffer, index, size - index);
-                        if(br == 0 || br < size){ await Task.Delay(1); }
-                        index += br;
-                        timesRead++;
-                    } //read the data buffer using the first 4 digits of info as the length
-                    
-                    netSuper.Log($"Got Data {timesRead} times", true);
+                    await stream.ReadAsync(dataBuffer, 0, size); //read the data buffer using the first 4 digits of info as the length
+                    //netSuper.Log($"Got Data {timesRead} times", true);
                     //await stream.ReadAsync(dataBuffer, 0, size); //read the data buffer using the first 4 digits of info as the length
                     int payloadId = int.Parse(info.Substring(4, 4));
                     netSuper.Log($"Recived Data From Client: {friendlyName} ID: {payloadId}");
@@ -333,6 +326,7 @@ public class NetSuper {
         try{
             await stream.WriteAsync(payload, 0, payload.Length); 
             while(stream.DataAvailable){ await Task.Delay(1); } //wait until the stream is empty
+            await Task.Delay(1); //wait 1ms
         }
         catch(Exception e){ Log($"Error sending payload: {e.Message}", true); return false; }
         return true;
